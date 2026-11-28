@@ -47,6 +47,7 @@ struct SettingsView: View {
     @State private var haStyleEntity: String?
     @ObservedObject var tileStore = TileStore.shared
     @State private var tilePickerID: UUID?
+    @State private var iconPickerID: UUID?
     @State private var tileFilter = ""
     @State private var tileToken = ""
     @State private var groupHAFilter = ""
@@ -216,6 +217,19 @@ struct SettingsView: View {
             note("Een negatieve waarde laat de dock deels onder de schermrand zakken. In de vakjes kun je ook een exacte waarde typen, buiten het bereik van de schuif.")
         } header: {
             sectionHeader("Positie", "arrow.up.and.down.and.arrow.left.and.right")
+        }
+
+        Section {
+            Toggle("Vaste breedte", isOn: Binding(
+                get: { store.theme.fixedWidth > 0 },
+                set: { on in store.binding(\.fixedWidth).wrappedValue = on ? 700 : 0 }
+            ))
+            if store.theme.fixedWidth > 0 {
+                slider("Breedte", store.binding(\.fixedWidth), 200...3000)
+                note("Past alles niet in deze breedte, dan scroll je horizontaal over de dock met twee vingers of het muiswiel.")
+            }
+        } header: {
+            sectionHeader("Breedte", "arrow.left.and.right")
         }
 
         Section {
@@ -767,7 +781,7 @@ struct SettingsView: View {
                 Button("Eigen shell-commando") { tileStore.add(.command) }
                 Button("URL met JSON") { tileStore.add(.url) }
             }
-            note("Een kant verschijnt zodra er een tegel op staat. Tegels zijn zo groot als je dock-iconen. Bij 'Bij klikken' kun je van elke tegel een knop maken.")
+            note("Een kant verschijnt zodra er een tegel op staat. Met 'Tegen de schermrand' staat een tegel links of rechts op het scherm, los van de dock. Tegels zijn zo groot als je dock-iconen. Bij 'Bij klikken' kun je van elke tegel een knop maken.")
         } header: {
             sectionHeader("Tweede dock", "rectangle.split.3x1")
         }
@@ -780,6 +794,7 @@ struct SettingsView: View {
                     Text("Rechts").tag(TileSide.right)
                 }
                 .pickerStyle(.segmented)
+                Toggle("Tegen de schermrand, los van de dock", isOn: $t.edge)
                 Picker("Bron", selection: $t.kind) {
                     ForEach(TileKind.allCases) { Text($0.label).tag($0) }
                 }
@@ -793,7 +808,22 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
                 }
                 if t.kind != .clock {
-                    TextField("Symbool (SF Symbol-naam)", text: $t.symbol)
+                    HStack {
+                        TextField("Symbool: SF Symbol of mdi:naam", text: $t.symbol)
+                            .textFieldStyle(.roundedBorder)
+                        TileGlyph(name: t.symbol, size: 18, color: .primary)
+                            .frame(width: 26, height: 26)
+                        Button("Zoek…") { iconPickerID = t.id }
+                            .popover(isPresented: Binding(
+                                get: { iconPickerID == t.id },
+                                set: { on in if !on, iconPickerID == t.id { iconPickerID = nil } }
+                            ), arrowEdge: .bottom) {
+                                IconPickerView(current: t.symbol) { name in
+                                    $t.wrappedValue.symbol = name
+                                    iconPickerID = nil
+                                }
+                            }
+                    }
                 }
                 if t.kind.hasNumericValue {
                     TextField("Eenheid, bijv. %", text: $t.unit)

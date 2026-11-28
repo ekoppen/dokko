@@ -95,10 +95,11 @@ struct TileConfig: Codable, Identifiable, Equatable {
     var actionTarget = ""
     var timezone = ""               // klok: leeg = lokale tijd
     var place = ""                  // weer: plaatsnaam
+    var edge = false                // tegen de schermrand i.p.v. naast de dock
 
     enum CodingKeys: String, CodingKey {
         case id, title, kind, side, symbol, display, entity, command, url, jsonPath
-        case metric, period, unit, lo, hi, interval, color, action, actionTarget, timezone, place
+        case metric, period, unit, lo, hi, interval, color, action, actionTarget, timezone, place, edge
     }
 
     init() {}
@@ -126,6 +127,7 @@ struct TileConfig: Codable, Identifiable, Equatable {
         actionTarget = c.get(.actionTarget, "")
         timezone = c.get(.timezone, "")
         place = c.get(.place, "")
+        edge = c.get(.edge, false)
     }
 }
 
@@ -218,7 +220,9 @@ final class TileStore: ObservableObject {
 
     // Geometrie
 
-    func tiles(on side: TileSide) -> [TileConfig] { tiles.filter { $0.side == side } }
+    func tiles(on side: TileSide, edge: Bool = false) -> [TileConfig] {
+        tiles.filter { $0.side == side && $0.edge == edge }
+    }
 
     func sideTheme(_ side: TileSide, main: DockTheme) -> DockTheme {
         let id = side == .left ? leftTheme : rightTheme
@@ -226,9 +230,9 @@ final class TileStore: ObservableObject {
         return main
     }
 
-    func sideWidth(_ side: TileSide, main t: DockTheme) -> CGFloat {
+    func sideWidth(_ side: TileSide, main t: DockTheme, edge: Bool = false) -> CGFloat {
         guard enabled else { return 0 }
-        let n = tiles(on: side).count
+        let n = tiles(on: side, edge: edge).count
         guard n > 0 else { return 0 }
         let th = sideTheme(side, main: t)
         return CGFloat(n) * CGFloat(t.iconSize) + CGFloat(n - 1) * CGFloat(th.spacing)
@@ -308,8 +312,8 @@ final class TileStore: ObservableObject {
     }
 
     /// Heeft deze kant minstens één tegel die op een klik reageert?
-    func hasActions(on side: TileSide) -> Bool {
-        enabled && tiles(on: side).contains { $0.action != .none }
+    func hasActions(on side: TileSide, edge: Bool = false) -> Bool {
+        enabled && tiles(on: side, edge: edge).contains { $0.action != .none }
     }
 
     // Voorbeeldtegels
@@ -353,7 +357,8 @@ final class TileStore: ObservableObject {
         guard let i = tiles.firstIndex(where: { $0.id == id }) else { return }
         // Verplaats binnen dezelfde kant
         let side = tiles[i].side
-        let same = tiles.indices.filter { tiles[$0].side == side }
+        let edge = tiles[i].edge
+        let same = tiles.indices.filter { tiles[$0].side == side && tiles[$0].edge == edge }
         guard let pos = same.firstIndex(of: i), same.indices.contains(pos + offset) else { return }
         tiles.swapAt(i, same[pos + offset])
     }
@@ -596,13 +601,14 @@ enum TileProviders {
 
 struct TilesBar: View {
     let side: TileSide
+    var edge = false
     let mainTheme: DockTheme
     let width: CGFloat
     @ObservedObject var store = TileStore.shared
 
     var body: some View {
         let theme = store.sideTheme(side, main: mainTheme)
-        let items = store.tiles(on: side)
+        let items = store.tiles(on: side, edge: edge)
         ZStack(alignment: .bottom) {
             if theme.showBackground {
                 DockBackground(theme: theme)
@@ -659,9 +665,7 @@ struct TileView: View {
             ClockTileContent(tile: tile, size: size, fg: fg)
         case .button:
             VStack(spacing: 3) {
-                Image(systemName: tile.symbol)
-                    .font(.system(size: size * 0.4))
-                    .foregroundColor(accent)
+                TileGlyph(name: tile.symbol, size: size * 0.4, color: accent)
                 Text(tile.title)
                     .font(.system(size: size * 0.16, weight: .medium))
                     .foregroundColor(fg.opacity(0.85))
@@ -687,9 +691,7 @@ struct TileView: View {
                     .rotationEffect(.degrees(-90))
                     .animation(.easeInOut(duration: 0.4), value: v.fraction)
                 VStack(spacing: 0) {
-                    Image(systemName: sym)
-                        .font(.system(size: size * 0.2))
-                        .foregroundColor(accent)
+                    TileGlyph(name: sym, size: size * 0.2, color: accent)
                     Text(v.text)
                         .font(.system(size: size * 0.22, weight: .bold, design: .rounded))
                         .foregroundColor(fg)
@@ -701,9 +703,7 @@ struct TileView: View {
             .padding(size * 0.08)
         case .status:
             VStack(spacing: 2) {
-                Image(systemName: sym)
-                    .font(.system(size: size * 0.36))
-                    .foregroundColor((v.ok ?? false) ? accent : fg.opacity(0.4))
+                TileGlyph(name: sym, size: size * 0.36, color: (v.ok ?? false) ? accent : fg.opacity(0.4))
                 Text(v.text)
                     .font(.system(size: size * 0.2, weight: .bold, design: .rounded))
                     .foregroundColor(fg)
@@ -712,9 +712,7 @@ struct TileView: View {
             }
         case .value:
             VStack(spacing: 1) {
-                Image(systemName: sym)
-                    .font(.system(size: size * 0.2))
-                    .foregroundColor(accent)
+                TileGlyph(name: sym, size: size * 0.2, color: accent)
                 Text(v.text)
                     .font(.system(size: size * 0.3, weight: .bold, design: .rounded))
                     .foregroundColor(fg)
@@ -763,5 +761,42 @@ struct ClockTileContent: View {
             }
             .padding(.horizontal, 3)
         }
+    }
+}
+
+
+// MARK: Tegels tegen de schermrand
+
+enum EdgeLayout {
+    /// Afstand tot de schermrand (zelfde waarde als de afstand van de dock tot de onderrand).
+    static func margin(_ t: DockTheme) -> CGFloat { max(CGFloat(t.bottomMargin), 0) }
+
+    static func panelSize(_ t: DockTheme, barWidth w: CGFloat) -> CGSize {
+        CGSize(width: w + margin(t) + 40,
+               height: DockLayout.barHeight(t) + margin(t) + CGFloat(t.shadowRadius) + 12)
+    }
+
+    /// De zichtbare balk in schermcoördinaten (AppKit, y omhoog).
+    static func barRect(_ side: TileSide, theme t: DockTheme, barWidth w: CGFloat, screen: NSScreen) -> NSRect {
+        let x = side == .left ? screen.frame.minX + margin(t) : screen.frame.maxX - margin(t) - w
+        return NSRect(x: x, y: screen.frame.minY + CGFloat(t.bottomMargin),
+                      width: w, height: DockLayout.barHeight(t))
+    }
+}
+
+struct EdgeTilesView: View {
+    let side: TileSide
+    @ObservedObject var store = ThemeStore.shared
+    @ObservedObject var tileStore = TileStore.shared
+
+    var body: some View {
+        let t = store.theme
+        let w = tileStore.sideWidth(side, main: t, edge: true)
+        let size = EdgeLayout.panelSize(t, barWidth: w)
+        TilesBar(side: side, edge: true, mainTheme: t, width: w)
+            .padding(side == .left ? .leading : .trailing, EdgeLayout.margin(t))
+            .padding(.bottom, EdgeLayout.margin(t))
+            .frame(width: size.width, height: size.height,
+                   alignment: side == .left ? .bottomLeading : .bottomTrailing)
     }
 }

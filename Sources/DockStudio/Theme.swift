@@ -127,9 +127,10 @@ struct DockTheme: Codable, Identifiable, Equatable {
 
     // Positie
     var offsetX: Double = 0
+    var fixedWidth: Double = 0      // 0 = breedte volgt de inhoud; anders vaste breedte met scrollen
 
     enum CodingKeys: String, CodingKey {
-        case id, name, shape, cornerRadius, colorA, useGradient, colorB, useBlur, borderColor, borderWidth, shadowRadius, iconSize, spacing, paddingTop, paddingBottom, paddingLeft, paddingRight, magnification, magnificationRange, bottomMargin, indicatorColor, iconShape, iconBackgroundEnabled, iconBackgroundColor, iconInset, showLabels, animResponse, animDamping, launchBounce, fadeDuration, showBackground, iconShadow, glowEnabled, glowColor, glowSize, glowIntensity, dimOthers, dimAmount, dimDesaturate, palette, offsetX
+        case id, name, shape, cornerRadius, colorA, useGradient, colorB, useBlur, borderColor, borderWidth, shadowRadius, iconSize, spacing, paddingTop, paddingBottom, paddingLeft, paddingRight, magnification, magnificationRange, bottomMargin, indicatorColor, iconShape, iconBackgroundEnabled, iconBackgroundColor, iconInset, showLabels, animResponse, animDamping, launchBounce, fadeDuration, showBackground, iconShadow, glowEnabled, glowColor, glowSize, glowIntensity, dimOthers, dimAmount, dimDesaturate, palette, offsetX, fixedWidth
     }
 
     init(id: UUID = UUID(), name: String) {
@@ -181,6 +182,7 @@ struct DockTheme: Codable, Identifiable, Equatable {
         if let v = try? c.decode(Bool.self, forKey: .dimDesaturate) { dimDesaturate = v }
         if let v = try? c.decode(Palette.self, forKey: .palette) { palette = v }
         if let v = try? c.decode(Double.self, forKey: .offsetX) { offsetX = v }
+        if let v = try? c.decode(Double.self, forKey: .fixedWidth) { fixedWidth = v }
     }
 
     func makeShape() -> AnyShape {

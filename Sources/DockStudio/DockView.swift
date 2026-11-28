@@ -20,6 +20,8 @@ struct VisualEffectBlur: NSViewRepresentable {
 final class DockHover: ObservableObject {
     static let shared = DockHover()
     @Published var mouse: CGPoint?
+    /// Horizontale scrollstand van de dock bij een vaste breedte.
+    @Published var scroll: CGFloat = 0
 }
 
 final class TrackerView: NSView {
@@ -76,8 +78,44 @@ enum DockLayout {
         barWidth(t, scales: [CGFloat](repeating: 1, count: max(count, 1)))
     }
 
+    /// Vaste breedte van de balk, of nil als de breedte de inhoud volgt.
+    static func fixedWidth(_ t: DockTheme) -> CGFloat? {
+        t.fixedWidth >= 100 ? CGFloat(t.fixedWidth) : nil
+    }
+
+    /// Breedte van alleen de iconen en tussenruimtes (zonder opvulling).
+    static func contentWidth(_ t: DockTheme, scales: [CGFloat]) -> CGFloat {
+        let icon = CGFloat(t.iconSize)
+        return scales.reduce(0) { $0 + icon * $1 } + max(CGFloat(scales.count) - 1, 0) * CGFloat(t.spacing)
+    }
+
+    /// Zichtbare breedte voor iconen bij een vaste breedte.
+    static func viewport(_ t: DockTheme) -> CGFloat? {
+        fixedWidth(t).map { max($0 - CGFloat(t.paddingLeft + t.paddingRight), 1) }
+    }
+
+    /// Hoever de inhoud maximaal kan scrollen.
+    static func maxScroll(_ t: DockTheme, count: Int) -> CGFloat {
+        guard let vp = viewport(t) else { return 0 }
+        let rest = [CGFloat](repeating: 1, count: max(count, 1))
+        return max(0, contentWidth(t, scales: rest) - vp)
+    }
+
+    /// x van het eerste icoon (linkerrand) in venstercoördinaten, rekening houdend met scrollen.
+    static func contentStart(_ t: DockTheme, scales: [CGFloat], panelWidth W: CGFloat, scroll: CGFloat) -> CGFloat {
+        if let f = fixedWidth(t), let vp = viewport(t) {
+            let left = (W - f) / 2 + CGFloat(t.paddingLeft)
+            let content = contentWidth(t, scales: scales)
+            if content <= vp { return left + (vp - content) / 2 }
+            let s = min(max(scroll, 0), maxScroll(t, count: scales.count))
+            return left - s
+        }
+        return (W - barWidth(t, scales: scales)) / 2 + CGFloat(t.paddingLeft)
+    }
+
     /// Breedte van de balk bij gegeven icoon-schalen.
     static func barWidth(_ t: DockTheme, scales: [CGFloat]) -> CGFloat {
+        if let f = fixedWidth(t) { return f }
         let icon = CGFloat(t.iconSize)
         let n = CGFloat(scales.count)
         return scales.reduce(0) { $0 + icon * $1 }
@@ -105,10 +143,9 @@ enum DockLayout {
     }
 
     /// Midden-x van elk icoon (balk staat gecentreerd in het venster).
-    static func centers(_ t: DockTheme, scales: [CGFloat], panelWidth: CGFloat) -> [CGFloat] {
+    static func centers(_ t: DockTheme, scales: [CGFloat], panelWidth: CGFloat, scroll: CGFloat = 0) -> [CGFloat] {
         let icon = CGFloat(t.iconSize)
-        let total = barWidth(t, scales: scales)
-        var x = (panelWidth - total) / 2 + CGFloat(t.paddingLeft)
+        var x = contentStart(t, scales: scales, panelWidth: panelWidth, scroll: scroll)
         var out: [CGFloat] = []
         for s in scales {
             let w = icon * s
@@ -125,7 +162,7 @@ enum DockLayout {
     }
 
     /// Schaal en gewicht per icoon op basis van de muispositie (zachte klokvorm, zoals het echte Dock).
-    static func hover(theme t: DockTheme, count n: Int, panelWidth W: CGFloat, mouse: CGPoint?) -> HoverResult {
+    static func hover(theme t: DockTheme, count n: Int, panelWidth W: CGFloat, mouse: CGPoint?, scroll: CGFloat = 0) -> HoverResult {
         var s = [CGFloat](repeating: 1, count: n)
         var w = [CGFloat](repeating: 0, count: n)
         let inactive = HoverResult(scales: s, weights: w, active: false)
@@ -144,7 +181,7 @@ enum DockLayout {
 
         // Een paar iteraties: de balk wordt breder, dus de iconen schuiven op.
         for _ in 0..<3 {
-            let cs = centers(t, scales: s, panelWidth: W)
+            let cs = centers(t, scales: s, panelWidth: W, scroll: scroll)
             w = cs.map { c in
                 let d = Double((m.x - c) / range)
                 return CGFloat(exp(-d * d))
@@ -155,12 +192,12 @@ enum DockLayout {
     }
 
     /// Welk icoon staat onder de muis (voor het label)?
-    static func hoveredIndex(theme t: DockTheme, scales: [CGFloat], panelWidth: CGFloat, mouse: CGPoint?) -> Int? {
+    static func hoveredIndex(theme t: DockTheme, scales: [CGFloat], panelWidth: CGFloat, mouse: CGPoint?, scroll: CGFloat = 0) -> Int? {
         guard let m = mouse, !scales.isEmpty else { return nil }
         let icon = CGFloat(t.iconSize)
         let top = max(CGFloat(t.bottomMargin), 0) + barHeight(t) + overshoot(t)
         guard m.y <= top else { return nil }
-        let cs = centers(t, scales: scales, panelWidth: panelWidth)
+        let cs = centers(t, scales: scales, panelWidth: panelWidth, scroll: scroll)
         for (i, c) in cs.enumerated() {
             let w = icon * scales[i]
             if abs(m.x - c) <= (w + CGFloat(t.spacing)) / 2 { return i }
@@ -315,7 +352,7 @@ struct DockView: View {
         guard item.groupID != nil else { model.open(item); return }
         let t = store.theme
         let rest = [CGFloat](repeating: 1, count: model.items.count)
-        let cs = DockLayout.centers(t, scales: rest, panelWidth: panelWidth)
+        let cs = DockLayout.centers(t, scales: rest, panelWidth: panelWidth, scroll: hover.scroll)
         guard index < cs.count, let f = DockWindowController.shared.panelFrame else { return }
         GroupPopup.shared.toggle(item,
                                  anchorX: f.minX + cs[index],
@@ -326,32 +363,15 @@ struct DockView: View {
         let t = store.theme
         let items = model.items
         let size = DockLayout.panelSize(theme: t, count: items.count)
+        let sc = hover.scroll
         let hv = DockLayout.hover(theme: t, count: items.count,
-                                  panelWidth: size.width, mouse: hover.mouse)
+                                  panelWidth: size.width, mouse: hover.mouse, scroll: sc)
         let scales = hv.scales
         let hovered = DockLayout.hoveredIndex(theme: t, scales: scales,
-                                              panelWidth: size.width, mouse: hover.mouse)
+                                              panelWidth: size.width, mouse: hover.mouse, scroll: sc)
         let barW = DockLayout.barWidth(t, scales: scales)
 
-        ZStack(alignment: .bottom) {
-            if t.showBackground {
-                DockBackground(theme: t)
-                    .frame(width: barW, height: DockLayout.barHeight(t))
-            } else {
-                Color.clear
-                    .frame(width: barW, height: DockLayout.barHeight(t))
-            }
-
-            ForEach(TileSide.allCases, id: \.self) { side in
-                let w = tileStore.sideWidth(side, main: t)
-                if w > 0 {
-                    TilesBar(side: side, mainTheme: t, width: w)
-                        .frame(width: w, height: DockLayout.barHeight(t))
-                        .offset(x: (side == .left ? -1 : 1) * (barW / 2 + TileStore.gap + w / 2))
-                }
-            }
-
-            HStack(alignment: .bottom, spacing: CGFloat(t.spacing)) {
+        let row = HStack(alignment: .bottom, spacing: CGFloat(t.spacing)) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
                     DockIconView(
                         item: item,
@@ -371,8 +391,44 @@ struct DockView: View {
                     }
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.bottom, CGFloat(t.paddingBottom))
-            .offset(x: CGFloat(t.paddingLeft - t.paddingRight) / 2)
+            .offset(x: DockLayout.contentStart(t, scales: scales, panelWidth: size.width, scroll: sc)
+                    - (size.width - DockLayout.contentWidth(t, scales: scales)) / 2)
+
+        ZStack(alignment: .bottom) {
+            if t.showBackground {
+                DockBackground(theme: t)
+                    .frame(width: barW, height: DockLayout.barHeight(t))
+            } else {
+                Color.clear
+                    .frame(width: barW, height: DockLayout.barHeight(t))
+            }
+
+            ForEach(TileSide.allCases, id: \.self) { side in
+                let w = tileStore.sideWidth(side, main: t)
+                if w > 0 {
+                    TilesBar(side: side, mainTheme: t, width: w)
+                        .frame(width: w, height: DockLayout.barHeight(t))
+                        .offset(x: (side == .left ? -1 : 1) * (barW / 2 + TileStore.gap + w / 2))
+                }
+            }
+
+            if let vp = DockLayout.viewport(t),
+               DockLayout.contentWidth(t, scales: scales) > vp {
+                // Vaste breedte: de iconen scrollen binnen de balk; alleen horizontaal afgesneden.
+                ZStack(alignment: .bottom) { row }
+                    .frame(width: size.width,
+                           height: size.height - max(CGFloat(t.bottomMargin), 0),
+                           alignment: .bottom)
+                    .mask {
+                        Rectangle()
+                            .frame(width: vp, height: size.height)
+                            .offset(x: CGFloat(t.paddingLeft - t.paddingRight) / 2)
+                    }
+            } else {
+                row
+            }
         }
         .padding(.bottom, max(CGFloat(t.bottomMargin), 0))
         .frame(width: size.width, height: size.height, alignment: .bottom)

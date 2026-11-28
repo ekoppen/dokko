@@ -11,6 +11,8 @@ final class DockWindowController {
     private var systemDockHidden = false
     private var mouseMonitor: Any?
     private var localMonitor: Any?
+    private var scrollMonitor: Any?
+    private var edgePanels: [TileSide: NSPanel] = [:]
     private var panelHidden = false
 
     // Slim verbergen
@@ -44,7 +46,25 @@ final class DockWindowController {
             return event
         }
 
+        // Horizontaal scrollen bij een vaste dock-breedte.
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            self?.scrolled(event)
+            return event
+        }
+
         apply()
+    }
+
+    private func scrolled(_ e: NSEvent) {
+        guard let panel, e.window === panel else { return }
+        let t = store.theme
+        guard DockLayout.fixedWidth(t) != nil else { return }
+        let maxS = DockLayout.maxScroll(t, count: model.items.count)
+        guard maxS > 0 else { return }
+        let d = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) ? e.scrollingDeltaX : e.scrollingDeltaY
+        let step = d * (e.hasPreciseScrollingDeltas ? 1 : 8)
+        let cur = min(max(DockHover.shared.scroll, 0), maxS)
+        DockHover.shared.scroll = min(max(cur - step, 0), maxS)
     }
 
     /// Past venster en systeem-Dock aan op de huidige instellingen.
@@ -64,6 +84,7 @@ final class DockWindowController {
             fullScreenHidden = false
             panel?.alphaValue = 1
             panel?.orderOut(nil)
+            for p in edgePanels.values { p.orderOut(nil) }
             if systemDockHidden {
                 systemDockHidden = false
                 SystemDock.restore()
@@ -98,6 +119,7 @@ final class DockWindowController {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = store.theme.fadeDuration
             panel.animator().alphaValue = hide ? 0 : 1
+            for p in edgePanels.values { p.animator().alphaValue = hide ? 0 : 1 }
         }
         panelHidden = hide
         refreshHitTest()
@@ -106,6 +128,7 @@ final class DockWindowController {
     /// Het venster is groter dan de zichtbare dock (ruimte voor vergroting, labels, schaduw).
     /// Alleen op de dock zelf vangt het venster muisevents; daarboven gaat alles door naar de apps eronder.
     private func refreshHitTest() {
+        refreshEdgeHitTest()
         guard let panel else { return }
         let t = store.theme
         let f = panel.frame
@@ -188,5 +211,57 @@ final class DockWindowController {
                            y: screen.frame.minY + min(CGFloat(t.bottomMargin), 0),
                            width: size.width, height: size.height)
         panel.setFrame(frame, display: true)
+        syncEdgePanels()
+    }
+
+    // MARK: Tegels tegen de schermrand
+
+    private func makeEdgePanel(_ side: TileSide) -> NSPanel {
+        let p = NSPanel(contentRect: .zero,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = false
+        p.level = .statusBar
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        p.isMovableByWindowBackground = false
+        p.ignoresMouseEvents = true
+        p.alphaValue = panelHidden ? 0 : 1
+        p.contentView = NSHostingView(rootView: EdgeTilesView(side: side))
+        return p
+    }
+
+    /// Maakt, verplaatst of verbergt de vensters voor tegels die tegen de schermrand staan.
+    private func syncEdgePanels() {
+        guard let screen = NSScreen.screens.first else { return }
+        let t = store.theme
+        for side in TileSide.allCases {
+            let w = TileStore.shared.sideWidth(side, main: t, edge: true)
+            guard store.dockEnabled, w > 0 else {
+                edgePanels[side]?.orderOut(nil)
+                continue
+            }
+            let p = edgePanels[side] ?? makeEdgePanel(side)
+            edgePanels[side] = p
+            let size = EdgeLayout.panelSize(t, barWidth: w)
+            let x = side == .left ? screen.frame.minX : screen.frame.maxX - size.width
+            p.setFrame(NSRect(x: x, y: screen.frame.minY + min(CGFloat(t.bottomMargin), 0),
+                              width: size.width, height: size.height), display: true)
+            p.orderFrontRegardless()
+        }
+    }
+
+    /// Randtegels vangen alleen muisevents boven een tegel met een actie.
+    private func refreshEdgeHitTest() {
+        guard !edgePanels.isEmpty, let screen = NSScreen.screens.first else { return }
+        let t = store.theme
+        let loc = NSEvent.mouseLocation
+        for (side, p) in edgePanels {
+            let w = TileStore.shared.sideWidth(side, main: t, edge: true)
+            let r = EdgeLayout.barRect(side, theme: t, barWidth: w, screen: screen).insetBy(dx: -4, dy: -4)
+            let ignore = panelHidden || !TileStore.shared.hasActions(on: side, edge: true) || !r.contains(loc)
+            if p.ignoresMouseEvents != ignore { p.ignoresMouseEvents = ignore }
+        }
     }
 }
