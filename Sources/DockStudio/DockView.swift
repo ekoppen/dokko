@@ -410,7 +410,7 @@ struct DockView: View {
                 if w > 0 {
                     TilesBar(side: side, mainTheme: t, width: w)
                         .frame(width: w, height: DockLayout.barHeight(t))
-                        .offset(x: (side == .left ? -1 : 1) * (barW / 2 + TileStore.gap + w / 2))
+                        .offset(x: (side == .left ? -1 : 1) * (barW / 2 + tileStore.gap(side) + w / 2))
                 }
             }
 

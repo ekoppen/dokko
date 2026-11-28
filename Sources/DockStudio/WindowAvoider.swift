@@ -92,8 +92,8 @@ final class WindowAvoider {
         // Tegel-docks naast de hoofd-dock horen erbij.
         let sideL = TileStore.shared.sideWidth(.left, main: t)
         let sideR = TileStore.shared.sideWidth(.right, main: t)
-        let extL = sideL > 0 ? sideL + TileStore.gap : 0
-        let extR = sideR > 0 ? sideR + TileStore.gap : 0
+        let extL = sideL > 0 ? sideL + TileStore.shared.gap(.left) : 0
+        let extR = sideR > 0 ? sideR + TileStore.shared.gap(.right) : 0
         let barRect = CGRect(x: screen.frame.midX - barW / 2 + CGFloat(t.offsetX) - extL,
                              y: H - dockTopAppKit,
                              width: barW + extL + extR, height: barH)

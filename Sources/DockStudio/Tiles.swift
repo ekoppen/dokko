@@ -177,9 +177,15 @@ final class TileData: ObservableObject {
 
 final class TileStore: ObservableObject {
     static let shared = TileStore()
-    static let gap: CGFloat = 12
+    static let defaultGap = 12.0
 
     @Published var tiles: [TileConfig] { didSet { save() } }
+    /// Afstand tussen dock en tegels, per kant.
+    @Published var gapLeft: Double { didSet { save() } }
+    @Published var gapRight: Double { didSet { save() } }
+    /// Afstand van randtegels tot de schermrand, per kant (nil = zelfde als de afstand tot de onderrand).
+    @Published var edgeLeft: Double? { didSet { save() } }
+    @Published var edgeRight: Double? { didSet { save() } }
     @Published var enabled: Bool { didSet { save() } }
     @Published var leftTheme: UUID? { didSet { save() } }
     @Published var rightTheme: UUID? { didSet { save() } }
@@ -190,6 +196,10 @@ final class TileStore: ObservableObject {
         var enabled: Bool
         var leftTheme: UUID?
         var rightTheme: UUID?
+        var gapLeft: Double?
+        var gapRight: Double?
+        var edgeLeft: Double?
+        var edgeRight: Double?
     }
 
     private var lastRun: [UUID: Date] = [:]
@@ -203,16 +213,25 @@ final class TileStore: ObservableObject {
             enabled = b.enabled
             leftTheme = b.leftTheme
             rightTheme = b.rightTheme
+            gapLeft = b.gapLeft ?? Self.defaultGap
+            gapRight = b.gapRight ?? Self.defaultGap
+            edgeLeft = b.edgeLeft
+            edgeRight = b.edgeRight
         } else {
             tiles = []
             enabled = true
             leftTheme = nil
             rightTheme = nil
+            gapLeft = Self.defaultGap
+            gapRight = Self.defaultGap
+            edgeLeft = nil
+            edgeRight = nil
         }
     }
 
     private func save() {
-        let b = Blob(tiles: tiles, enabled: enabled, leftTheme: leftTheme, rightTheme: rightTheme)
+        let b = Blob(tiles: tiles, enabled: enabled, leftTheme: leftTheme, rightTheme: rightTheme,
+                     gapLeft: gapLeft, gapRight: gapRight, edgeLeft: edgeLeft, edgeRight: edgeRight)
         if let data = try? JSONEncoder().encode(b) {
             UserDefaults.standard.set(data, forKey: key)
         }
@@ -239,10 +258,19 @@ final class TileStore: ObservableObject {
             + CGFloat(th.paddingLeft + th.paddingRight)
     }
 
+    func gap(_ side: TileSide) -> CGFloat { CGFloat(max(side == .left ? gapLeft : gapRight, 0)) }
+
+    /// Afstand van de randtegels tot de schermrand.
+    func edgeMargin(_ side: TileSide, main t: DockTheme) -> CGFloat {
+        CGFloat(max((side == .left ? edgeLeft : edgeRight) ?? t.bottomMargin, 0))
+    }
+
     /// Extra breedte aan weerszijden van de hoofd-dock (het venster blijft symmetrisch).
     func sideExtent(main t: DockTheme) -> CGFloat {
-        let m = max(sideWidth(.left, main: t), sideWidth(.right, main: t))
-        return m > 0 ? m + Self.gap : 0
+        TileSide.allCases.map { s -> CGFloat in
+            let w = sideWidth(s, main: t)
+            return w > 0 ? w + gap(s) : 0
+        }.max() ?? 0
     }
 
     // Waarden
@@ -768,17 +796,22 @@ struct ClockTileContent: View {
 // MARK: Tegels tegen de schermrand
 
 enum EdgeLayout {
-    /// Afstand tot de schermrand (zelfde waarde als de afstand van de dock tot de onderrand).
+    /// Afstand tot de onderrand (zelfde waarde als bij de dock).
     static func margin(_ t: DockTheme) -> CGFloat { max(CGFloat(t.bottomMargin), 0) }
+    /// Afstand tot de zijkant van het scherm (instelbaar per kant).
+    static func sideMargin(_ side: TileSide, _ t: DockTheme) -> CGFloat {
+        TileStore.shared.edgeMargin(side, main: t)
+    }
 
-    static func panelSize(_ t: DockTheme, barWidth w: CGFloat) -> CGSize {
-        CGSize(width: w + margin(t) + 40,
+    static func panelSize(_ side: TileSide, _ t: DockTheme, barWidth w: CGFloat) -> CGSize {
+        CGSize(width: w + sideMargin(side, t) + 40,
                height: DockLayout.barHeight(t) + margin(t) + CGFloat(t.shadowRadius) + 12)
     }
 
     /// De zichtbare balk in schermcoördinaten (AppKit, y omhoog).
     static func barRect(_ side: TileSide, theme t: DockTheme, barWidth w: CGFloat, screen: NSScreen) -> NSRect {
-        let x = side == .left ? screen.frame.minX + margin(t) : screen.frame.maxX - margin(t) - w
+        let m = sideMargin(side, t)
+        let x = side == .left ? screen.frame.minX + m : screen.frame.maxX - m - w
         return NSRect(x: x, y: screen.frame.minY + CGFloat(t.bottomMargin),
                       width: w, height: DockLayout.barHeight(t))
     }
@@ -792,9 +825,9 @@ struct EdgeTilesView: View {
     var body: some View {
         let t = store.theme
         let w = tileStore.sideWidth(side, main: t, edge: true)
-        let size = EdgeLayout.panelSize(t, barWidth: w)
+        let size = EdgeLayout.panelSize(side, t, barWidth: w)
         TilesBar(side: side, edge: true, mainTheme: t, width: w)
-            .padding(side == .left ? .leading : .trailing, EdgeLayout.margin(t))
+            .padding(side == .left ? .leading : .trailing, EdgeLayout.sideMargin(side, t))
             .padding(.bottom, EdgeLayout.margin(t))
             .frame(width: size.width, height: size.height,
                    alignment: side == .left ? .bottomLeading : .bottomTrailing)

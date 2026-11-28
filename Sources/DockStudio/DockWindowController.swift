@@ -152,13 +152,12 @@ final class DockWindowController {
             let band = NSRect(x: f.minX, y: f.minY + max(bottom - 4, 0),
                               width: f.width, height: barTop - max(bottom - 4, 0) + 4)
             if band.contains(loc) {
-                let gap = TileStore.gap
                 if loc.x < rect.minX, TileStore.shared.hasActions(on: .left) {
                     let w = TileStore.shared.sideWidth(.left, main: t)
-                    inside = loc.x >= f.midX - baseW / 2 - gap - w - 4
+                    inside = loc.x >= f.midX - baseW / 2 - TileStore.shared.gap(.left) - w - 4
                 } else if loc.x > rect.maxX, TileStore.shared.hasActions(on: .right) {
                     let w = TileStore.shared.sideWidth(.right, main: t)
-                    inside = loc.x <= f.midX + baseW / 2 + gap + w + 4
+                    inside = loc.x <= f.midX + baseW / 2 + TileStore.shared.gap(.right) + w + 4
                 }
             }
         }
@@ -244,7 +243,7 @@ final class DockWindowController {
             }
             let p = edgePanels[side] ?? makeEdgePanel(side)
             edgePanels[side] = p
-            let size = EdgeLayout.panelSize(t, barWidth: w)
+            let size = EdgeLayout.panelSize(side, t, barWidth: w)
             let x = side == .left ? screen.frame.minX : screen.frame.maxX - size.width
             p.setFrame(NSRect(x: x, y: screen.frame.minY + min(CGFloat(t.bottomMargin), 0),
                               width: size.width, height: size.height), display: true)

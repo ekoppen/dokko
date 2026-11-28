@@ -759,12 +759,22 @@ struct SettingsView: View {
         }
     }
 
+    /// Leeg (nil) betekent: zelfde als de afstand tot de onderrand.
+    private func edgeBinding(_ kp: ReferenceWritableKeyPath<TileStore, Double?>) -> Binding<Double> {
+        Binding(get: { tileStore[keyPath: kp] ?? max(store.theme.bottomMargin, 0) },
+                set: { tileStore[keyPath: kp] = $0 })
+    }
+
     @ViewBuilder
     private var tilesTab: some View {
         Section {
             Toggle("Tegels naast de dock tonen", isOn: $tileStore.enabled)
             sideThemePicker("Opmaak links", $tileStore.leftTheme)
             sideThemePicker("Opmaak rechts", $tileStore.rightTheme)
+            slider("Afstand tot dock links", $tileStore.gapLeft, 0...400)
+            slider("Afstand tot dock rechts", $tileStore.gapRight, 0...400)
+            slider("Afstand tot schermrand links", edgeBinding(\.edgeLeft), 0...800)
+            slider("Afstand tot schermrand rechts", edgeBinding(\.edgeRight), 0...800)
             Menu("Nieuwe tegel") {
                 Button("3D-print voortgang (Home Assistant)") { tileStore.add(.printer) }
                 Button("VPN-status") { tileStore.add(.vpn) }
